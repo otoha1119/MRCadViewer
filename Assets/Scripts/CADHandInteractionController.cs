@@ -242,12 +242,20 @@ public class CADHandInteractionController : MonoBehaviour
 
     private void UpdateRightRotation()
     {
-        if (!rightHand.IsPointerPoseValid) return;
+        if (rightHand == null || !rightHand.IsPointerPoseValid) return;
         Transform pose = rightHand.PointerPose;
         if (pose == null) return;
 
         Quaternion rotDelta = pose.rotation * Quaternion.Inverse(grabInitialRightHandRot);
-        targetObject.rotation = rotDelta * grabInitialObjRot;
+
+        // Invert pitch (X) and yaw (Y) so the model turns toward the direction
+        // the user moves the hand. Roll (Z) is preserved.
+        rotDelta.ToAngleAxis(out float angle, out Vector3 axis);
+        axis.x = -axis.x;
+        axis.y = -axis.y;
+        Quaternion invertedDelta = Quaternion.AngleAxis(angle, axis);
+
+        targetObject.rotation = invertedDelta * grabInitialObjRot;
     }
 
     private bool BeginLeftTranslation()
@@ -262,7 +270,7 @@ public class CADHandInteractionController : MonoBehaviour
 
     private void UpdateLeftTranslation()
     {
-        if (!leftHand.IsPointerPoseValid) return;
+        if (leftHand == null || !leftHand.IsPointerPoseValid) return;
         Transform pose = leftHand.PointerPose;
         if (pose == null) return;
 
