@@ -6,7 +6,7 @@ public class CADHandInteractionController : MonoBehaviour
     public enum InteractionMode
     {
         Idle,
-        RemoteGrabbing,
+        SingleHand,
         TwoHandScaling
     }
 
@@ -23,10 +23,12 @@ public class CADHandInteractionController : MonoBehaviour
     [Header("Remote Grab Ray")]
     public float maxRayDistance = 10f;
     public LineRenderer rightRayLine;
+    public LineRenderer leftRayLine;
     public float rayWidth = 0.005f;
     public Color rayIdleColor = Color.white;
     public Color rayHitColor = Color.yellow;
     public Color rayGrabbingColor = Color.green;
+    public Color rayTranslatingColor = Color.cyan;
 
     [Header("Scale (Two-hand Pinch)")]
     public float minScaleFactor = 0.1f;
@@ -45,15 +47,20 @@ public class CADHandInteractionController : MonoBehaviour
 
     [Header("Debug (read-only)")]
     [SerializeField] private InteractionMode currentMode = InteractionMode.Idle;
-    [SerializeField] private bool debugRayHit;
+    [SerializeField] private bool rightRotating;
+    [SerializeField] private bool leftTranslating;
+    [SerializeField] private bool debugRightRayHit;
+    [SerializeField] private bool debugLeftRayHit;
     [SerializeField] private bool debugLeftPinching;
     [SerializeField] private bool debugRightPinching;
-    [SerializeField] private bool debugPointerPoseValid;
+    [SerializeField] private bool debugRightPointerValid;
+    [SerializeField] private bool debugLeftPointerValid;
 
-    private Vector3 grabInitialHandPos;
-    private Quaternion grabInitialHandRot;
-    private Vector3 grabInitialObjPos;
+    private Quaternion grabInitialRightHandRot;
     private Quaternion grabInitialObjRot;
+
+    private Vector3 grabInitialLeftHandPos;
+    private Vector3 grabInitialObjPos;
 
     private float scaleInitialDistance;
     private Vector3 scaleInitialScale;
@@ -78,13 +85,17 @@ public class CADHandInteractionController : MonoBehaviour
         if (joystickController == null) joystickController = GetComponent<CADJoystickController>();
         if (debugVisual != null) debugMaterial = debugVisual.material;
 
-        if (rightRayLine != null)
-        {
-            rightRayLine.useWorldSpace = true;
-            rightRayLine.positionCount = 2;
-            rightRayLine.startWidth = rayWidth;
-            rightRayLine.endWidth = rayWidth;
-        }
+        InitRayLine(rightRayLine);
+        InitRayLine(leftRayLine);
+    }
+
+    private void InitRayLine(LineRenderer line)
+    {
+        if (line == null) return;
+        line.useWorldSpace = true;
+        line.positionCount = 2;
+        line.startWidth = rayWidth;
+        line.endWidth = rayWidth;
     }
 
     private void Update()
@@ -101,39 +112,79 @@ public class CADHandInteractionController : MonoBehaviour
         debugRightPinching = rightHand != null && rightHand.IsTracked &&
                              rightHand.GetFingerIsPinching(OVRHand.HandFinger.Index);
 
-        bool hasRay = TryGetRightHandRay(out Ray ray);
-        debugPointerPoseValid = hasRay;
-        bool rayHit = hasRay && RayHitsTarget(ray);
-        debugRayHit = rayHit;
+        bool hasRightRay = TryGetRightHandRay(out Ray rightRay);
+        bool hasLeftRay = TryGetLeftHandRay(out Ray leftRay);
+        debugRightPointerValid = hasRightRay;
+        debugLeftPointerValid = hasLeftRay;
 
-        switch (currentMode)
+        bool rightRayHit = hasRightRay && RayHitsTarget(rightRay);
+        bool leftRayHit = hasLeftRay && RayHitsTarget(leftRay);
+        debugRightRayHit = rightRayHit;
+        debugLeftRayHit = leftRayHit;
+
+        if (currentMode == InteractionMode.TwoHandScaling)
         {
-            case InteractionMode.Idle:
-                if (debugLeftPinching && debugRightPinching)
-                {
-                    BeginTwoHandScale();
-                    currentMode = InteractionMode.TwoHandScaling;
-                }
-                else if (debugRightPinching && rayHit)
-                {
-                    BeginRemoteGrab();
-                    currentMode = InteractionMode.RemoteGrabbing;
-                }
-                break;
+            if (!debugLeftPinching || !debugRightPinching)
+            {
+                currentMode = InteractionMode.Idle;
+            }
+            else
+            {
+                UpdateTwoHandScale();
+            }
+        }
+        else
+        {
+            // Both pinching simultaneously takes priority and overrides single-hand actions.
+            if (debugLeftPinching && debugRightPinching)
+            {
+                rightRotating = false;
+                leftTranslating = false;
+                BeginTwoHandScale();
+                currentMode = InteractionMode.TwoHandScaling;
+            }
+            else
+            {
+                UpdateRightHandState(rightRayHit);
+                UpdateLeftHandState(leftRayHit);
 
-            case InteractionMode.RemoteGrabbing:
-                if (!debugRightPinching) currentMode = InteractionMode.Idle;
-                else UpdateRemoteGrab();
-                break;
-
-            case InteractionMode.TwoHandScaling:
-                if (!debugLeftPinching || !debugRightPinching) currentMode = InteractionMode.Idle;
-                else UpdateTwoHandScale();
-                break;
+                currentMode = (rightRotating || leftTranslating)
+                    ? InteractionMode.SingleHand
+                    : InteractionMode.Idle;
+            }
         }
 
-        UpdateRayVisual(hasRay, ray, rayHit);
-        UpdateDebugVisual(rayHit);
+        UpdateRayVisual(rightRayLine, hasRightRay, rightRay, rightRayHit, rightRotating, rayGrabbingColor);
+        UpdateRayVisual(leftRayLine, hasLeftRay, leftRay, leftRayHit, leftTranslating, rayTranslatingColor);
+        UpdateDebugVisual(rightRayHit || leftRayHit);
+    }
+
+    private void UpdateRightHandState(bool rightRayHit)
+    {
+        if (rightRotating)
+        {
+            if (!debugRightPinching) rightRotating = false;
+            else UpdateRightRotation();
+            return;
+        }
+        if (debugRightPinching && rightRayHit && BeginRightRotation())
+        {
+            rightRotating = true;
+        }
+    }
+
+    private void UpdateLeftHandState(bool leftRayHit)
+    {
+        if (leftTranslating)
+        {
+            if (!debugLeftPinching) leftTranslating = false;
+            else UpdateLeftTranslation();
+            return;
+        }
+        if (debugLeftPinching && leftRayHit && BeginLeftTranslation())
+        {
+            leftTranslating = true;
+        }
     }
 
     private void UpdateJoystickCoexistence()
@@ -158,6 +209,17 @@ public class CADHandInteractionController : MonoBehaviour
         return true;
     }
 
+    private bool TryGetLeftHandRay(out Ray ray)
+    {
+        ray = default;
+        if (leftHand == null || !leftHand.IsTracked) return false;
+        if (!leftHand.IsPointerPoseValid) return false;
+        Transform pose = leftHand.PointerPose;
+        if (pose == null) return false;
+        ray = new Ray(pose.position, pose.forward);
+        return true;
+    }
+
     private bool RayHitsTarget(Ray ray)
     {
         if (!Physics.Raycast(ray, out RaycastHit hit, maxRayDistance)) return false;
@@ -168,26 +230,44 @@ public class CADHandInteractionController : MonoBehaviour
         return false;
     }
 
-    private void BeginRemoteGrab()
+    private bool BeginRightRotation()
     {
+        if (rightHand == null || !rightHand.IsPointerPoseValid) return false;
         Transform pose = rightHand.PointerPose;
-        grabInitialHandPos = pose.position;
-        grabInitialHandRot = pose.rotation;
-        grabInitialObjPos = targetObject.position;
+        if (pose == null) return false;
+        grabInitialRightHandRot = pose.rotation;
         grabInitialObjRot = targetObject.rotation;
+        return true;
     }
 
-    private void UpdateRemoteGrab()
+    private void UpdateRightRotation()
     {
         if (!rightHand.IsPointerPoseValid) return;
         Transform pose = rightHand.PointerPose;
         if (pose == null) return;
 
-        Vector3 handDelta = pose.position - grabInitialHandPos;
-        targetObject.position = grabInitialObjPos + handDelta;
-
-        Quaternion rotDelta = pose.rotation * Quaternion.Inverse(grabInitialHandRot);
+        Quaternion rotDelta = pose.rotation * Quaternion.Inverse(grabInitialRightHandRot);
         targetObject.rotation = rotDelta * grabInitialObjRot;
+    }
+
+    private bool BeginLeftTranslation()
+    {
+        if (leftHand == null || !leftHand.IsPointerPoseValid) return false;
+        Transform pose = leftHand.PointerPose;
+        if (pose == null) return false;
+        grabInitialLeftHandPos = pose.position;
+        grabInitialObjPos = targetObject.position;
+        return true;
+    }
+
+    private void UpdateLeftTranslation()
+    {
+        if (!leftHand.IsPointerPoseValid) return;
+        Transform pose = leftHand.PointerPose;
+        if (pose == null) return;
+
+        Vector3 handDelta = pose.position - grabInitialLeftHandPos;
+        targetObject.position = grabInitialObjPos + handDelta;
     }
 
     private void BeginTwoHandScale()
@@ -237,35 +317,40 @@ public class CADHandInteractionController : MonoBehaviour
         return cache.Count > 0;
     }
 
-    private void UpdateRayVisual(bool hasRay, Ray ray, bool hit)
+    private void UpdateRayVisual(LineRenderer line, bool hasRay, Ray ray, bool hit, bool active, Color activeColor)
     {
-        if (rightRayLine == null) return;
+        if (line == null) return;
         if (!hasRay)
         {
-            rightRayLine.enabled = false;
+            line.enabled = false;
             return;
         }
-        rightRayLine.enabled = true;
-        rightRayLine.positionCount = 2;
-        rightRayLine.SetPosition(0, ray.origin);
-        rightRayLine.SetPosition(1, ray.origin + ray.direction * maxRayDistance);
+        line.enabled = true;
+        line.positionCount = 2;
+        line.SetPosition(0, ray.origin);
+        line.SetPosition(1, ray.origin + ray.direction * maxRayDistance);
+
         Color c = rayIdleColor;
-        if (currentMode == InteractionMode.RemoteGrabbing) c = rayGrabbingColor;
+        if (active) c = activeColor;
         else if (hit) c = rayHitColor;
-        rightRayLine.startColor = c;
-        rightRayLine.endColor = c;
+        line.startColor = c;
+        line.endColor = c;
     }
 
-    private void UpdateDebugVisual(bool rayHit)
+    private void UpdateDebugVisual(bool anyRayHit)
     {
         if (debugMaterial == null) return;
         Color c = colorIdle;
         switch (currentMode)
         {
-            case InteractionMode.RemoteGrabbing: c = colorGrabbing; break;
-            case InteractionMode.TwoHandScaling: c = colorScaling; break;
+            case InteractionMode.SingleHand:
+                c = colorGrabbing;
+                break;
+            case InteractionMode.TwoHandScaling:
+                c = colorScaling;
+                break;
             case InteractionMode.Idle:
-                if (rayHit) c = colorRayHit;
+                if (anyRayHit) c = colorRayHit;
                 break;
         }
         if (debugMaterial.HasProperty("_BaseColor")) debugMaterial.SetColor("_BaseColor", c);
