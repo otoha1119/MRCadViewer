@@ -1,0 +1,128 @@
+# =============================================================================
+# .gitattributes — 行末・差分表示・Git LFS 設定
+#
+# 現状の Assets/ は数 MB しかないため，LFS は不要．
+# 将来，テクスチャ・動画・大型 FBX 等で 1 ファイル 50MB 超や
+# Assets/ 合計が数百 MB になり始めたら，下の LFS セクションを
+# コメントアウトして有効化する．
+#
+# 有効化手順（参考）:
+#   1. このファイルの LFS 行のコメントを外す
+#   2. brew install git-lfs && git lfs install
+#   3. 既存ファイルを LFS に移行する場合:
+#        git lfs migrate import --include="*.fbx,*.png,*.jpg,*.psd,*.tga,*.exr,*.mp4,*.mov,*.wav"
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 行末（CRLF / LF）の自動正規化
+# -----------------------------------------------------------------------------
+* text=auto eol=lf
+
+# Unity の YAML テキストアセットはテキスト扱い
+*.cs              text diff=csharp
+*.shader          text
+*.cginc           text
+*.hlsl            text
+*.compute         text
+*.uss             text
+*.uxml            text
+*.json            text
+*.md              text
+*.txt             text
+*.xml             text
+*.yaml            text
+*.yml             text
+
+# Unity アセット（YAML テキストだが行末は LF 固定にしておくと安全）
+*.unity           text eol=lf
+*.prefab          text eol=lf
+*.asset           text eol=lf
+*.mat             text eol=lf
+*.anim            text eol=lf
+*.controller      text eol=lf
+*.physicsMaterial text eol=lf
+*.physicMaterial  text eol=lf
+*.meta            text eol=lf
+*.mask            text eol=lf
+*.spriteatlas     text eol=lf
+*.guiskin         text eol=lf
+*.flare           text eol=lf
+*.fontsettings    text eol=lf
+*.giparams        text eol=lf
+*.preset          text eol=lf
+*.terrainlayer    text eol=lf
+*.cubemap         text eol=lf
+*.lighting        text eol=lf
+*.shadervariants  text eol=lf
+*.signal          text eol=lf
+*.playable        text eol=lf
+
+# -----------------------------------------------------------------------------
+# バイナリ扱い（diff を出さない）
+# -----------------------------------------------------------------------------
+*.fbx             binary
+*.obj             binary
+*.blend           binary
+*.dae             binary
+*.3ds             binary
+*.dxf             binary
+*.stl             binary
+
+*.png             binary
+*.jpg             binary
+*.jpeg            binary
+*.gif             binary
+*.bmp             binary
+*.tga             binary
+*.tif             binary
+*.tiff            binary
+*.psd             binary
+*.exr             binary
+*.hdr             binary
+
+*.wav             binary
+*.mp3             binary
+*.ogg             binary
+*.aif             binary
+*.aiff            binary
+
+*.mp4             binary
+*.mov             binary
+*.webm            binary
+
+*.unitypackage    binary
+*.apk             binary
+*.aab             binary
+*.dll             binary
+*.so              binary
+*.dylib           binary
+*.a               binary
+*.pdb             binary
+
+# =============================================================================
+# Git LFS 設定（必要になったらコメントアウトを外す）
+# =============================================================================
+# *.fbx           filter=lfs diff=lfs merge=lfs -text
+# *.obj           filter=lfs diff=lfs merge=lfs -text
+# *.blend         filter=lfs diff=lfs merge=lfs -text
+# *.stl           filter=lfs diff=lfs merge=lfs -text
+#
+# *.png           filter=lfs diff=lfs merge=lfs -text
+# *.jpg           filter=lfs diff=lfs merge=lfs -text
+# *.jpeg          filter=lfs diff=lfs merge=lfs -text
+# *.tga           filter=lfs diff=lfs merge=lfs -text
+# *.tif           filter=lfs diff=lfs merge=lfs -text
+# *.tiff          filter=lfs diff=lfs merge=lfs -text
+# *.psd           filter=lfs diff=lfs merge=lfs -text
+# *.exr           filter=lfs diff=lfs merge=lfs -text
+# *.hdr           filter=lfs diff=lfs merge=lfs -text
+#
+# *.wav           filter=lfs diff=lfs merge=lfs -text
+# *.mp3           filter=lfs diff=lfs merge=lfs -text
+# *.ogg           filter=lfs diff=lfs merge=lfs -text
+#
+# *.mp4           filter=lfs diff=lfs merge=lfs -text
+# *.mov           filter=lfs diff=lfs merge=lfs -text
+# *.webm          filter=lfs diff=lfs merge=lfs -text
+#
+# *.unitypackage  filter=lfs diff=lfs merge=lfs -text
