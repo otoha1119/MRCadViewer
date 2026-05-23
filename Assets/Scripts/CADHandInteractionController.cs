@@ -16,6 +16,9 @@ public class CADHandInteractionController : MonoBehaviour
     public OVRSkeleton leftSkeleton;
     public OVRSkeleton rightSkeleton;
 
+    [Header("Head Reference (OVRCameraRig > TrackingSpace > CenterEyeAnchor)")]
+    public Transform centerEyeAnchor;
+
     [Header("Target")]
     public Transform targetObject;
     public BoxCollider targetCollider;
@@ -33,6 +36,17 @@ public class CADHandInteractionController : MonoBehaviour
     [Header("Scale (Two-hand Pinch)")]
     public float minScaleFactor = 0.1f;
     public float maxScaleFactor = 10f;
+
+    [Header("Gain (hand-to-object amplification)")]
+    public float translationGain = 3.0f;
+    // Degrees of rotation per meter of right-hand XY motion (depth ignored).
+    // Now using GetPinchPosition (fingertip midpoint) which gives real motion,
+    // so this can stay in a sane range.
+    public float rotationGain = 360f;
+
+    [Header("Pinch Hysteresis")]
+    [Range(0f, 1f)] public float pinchEnterThreshold = 0.9f;
+    [Range(0f, 1f)] public float pinchExitThreshold = 0.5f;
 
     [Header("Coexistence")]
     public CADJoystickController joystickController;
@@ -56,8 +70,9 @@ public class CADHandInteractionController : MonoBehaviour
     [SerializeField] private bool debugRightPointerValid;
     [SerializeField] private bool debugLeftPointerValid;
 
-    private Quaternion grabInitialRightHandRot;
-    private Quaternion grabInitialObjRot;
+    private Vector3 lastFrameRightRotatePos;
+    private bool rightPinchLatched;
+    private bool leftPinchLatched;
 
     private Vector3 grabInitialLeftHandPos;
     private Vector3 grabInitialObjPos;
@@ -107,10 +122,8 @@ public class CADHandInteractionController : MonoBehaviour
 
         if (targetObject == null || targetCollider == null) return;
 
-        debugLeftPinching = leftHand != null && leftHand.IsTracked &&
-                            leftHand.GetFingerIsPinching(OVRHand.HandFinger.Index);
-        debugRightPinching = rightHand != null && rightHand.IsTracked &&
-                             rightHand.GetFingerIsPinching(OVRHand.HandFinger.Index);
+        debugRightPinching = UpdatePinchLatch(rightHand, ref rightPinchLatched);
+        debugLeftPinching = UpdatePinchLatch(leftHand, ref leftPinchLatched);
 
         bool hasRightRay = TryGetRightHandRay(out Ray rightRay);
         bool hasLeftRay = TryGetLeftHandRay(out Ray leftRay);
@@ -187,6 +200,32 @@ public class CADHandInteractionController : MonoBehaviour
         }
     }
 
+    private bool UpdatePinchLatch(OVRHand hand, ref bool latched)
+    {
+        if (hand == null || !hand.IsTracked)
+        {
+            latched = false;
+            return false;
+        }
+        float strength = hand.GetFingerPinchStrength(OVRHand.HandFinger.Index);
+        if (float.IsNaN(strength))
+        {
+            latched = false;
+            return false;
+        }
+        if (!latched && strength >= pinchEnterThreshold) latched = true;
+        else if (latched && strength < pinchExitThreshold) latched = false;
+        return latched;
+    }
+
+    private void OnValidate()
+    {
+        pinchEnterThreshold = Mathf.Clamp01(pinchEnterThreshold);
+        pinchExitThreshold = Mathf.Clamp01(pinchExitThreshold);
+        if (pinchExitThreshold >= pinchEnterThreshold)
+            pinchExitThreshold = Mathf.Max(0f, pinchEnterThreshold - 0.1f);
+    }
+
     private void UpdateJoystickCoexistence()
     {
         if (!disableJoystickWhenHandsTracked || joystickController == null) return;
@@ -232,30 +271,37 @@ public class CADHandInteractionController : MonoBehaviour
 
     private bool BeginRightRotation()
     {
-        if (rightHand == null || !rightHand.IsPointerPoseValid) return false;
-        Transform pose = rightHand.PointerPose;
-        if (pose == null) return false;
-        grabInitialRightHandRot = pose.rotation;
-        grabInitialObjRot = targetObject.rotation;
+        if (!EnsureBoneCache(rightSkeleton, rightBoneCache)) return false;
+        lastFrameRightRotatePos = GetPinchPosition(rightSkeleton, rightBoneCache);
         return true;
     }
 
     private void UpdateRightRotation()
     {
-        if (rightHand == null || !rightHand.IsPointerPoseValid) return;
-        Transform pose = rightHand.PointerPose;
-        if (pose == null) return;
+        if (!EnsureBoneCache(rightSkeleton, rightBoneCache)) return;
 
-        Quaternion rotDelta = pose.rotation * Quaternion.Inverse(grabInitialRightHandRot);
+        // Use fingertip-midpoint position (same as two-hand scale) — this is
+        // the actual physical hand motion, unlike PointerPose which is a damped
+        // pointer-ray origin. Per-frame accumulation so rotation past 360° works.
+        Vector3 current = GetPinchPosition(rightSkeleton, rightBoneCache);
+        Vector3 worldFrameDelta = current - lastFrameRightRotatePos;
+        lastFrameRightRotatePos = current;
 
-        // Invert pitch (X) and yaw (Y) so the model turns toward the direction
-        // the user moves the hand. Roll (Z) is preserved.
-        rotDelta.ToAngleAxis(out float angle, out Vector3 axis);
-        axis.x = -axis.x;
-        axis.y = -axis.y;
-        Quaternion invertedDelta = Quaternion.AngleAxis(angle, axis);
+        // Convert into head-local space so "right is right" regardless of body orientation.
+        // Camera.main is unreliable here because the scene has a legacy "Main Camera"
+        // separate from OVRCameraRig's CenterEyeCamera. Fall back to world axes if unset.
+        Vector3 localDelta = centerEyeAnchor != null
+            ? centerEyeAnchor.InverseTransformVector(worldFrameDelta)
+            : worldFrameDelta;
 
-        targetObject.rotation = invertedDelta * grabInitialObjRot;
+        // Sign chosen so the grabbed surface follows the hand:
+        //   right hand right  → object rotates right
+        //   right hand up     → object rotates up (top tilts toward viewer)
+        float yaw = -localDelta.x * rotationGain;
+        float pitch = localDelta.y * rotationGain;
+
+        Quaternion frameRot = Quaternion.Euler(pitch, yaw, 0f);
+        targetObject.rotation = frameRot * targetObject.rotation;
     }
 
     private bool BeginLeftTranslation()
@@ -275,7 +321,7 @@ public class CADHandInteractionController : MonoBehaviour
         if (pose == null) return;
 
         Vector3 handDelta = pose.position - grabInitialLeftHandPos;
-        targetObject.position = grabInitialObjPos + handDelta;
+        targetObject.position = grabInitialObjPos + handDelta * translationGain;
     }
 
     private void BeginTwoHandScale()
